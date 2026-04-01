@@ -159,6 +159,7 @@ type defaultActorSystem struct {
 	name           string
 	config         *Config
 	registry       Registry
+	futureManager  FutureManager
 	dispatchers    atomic.Value // map[string]Dispatcher
 	root           ActorRef
 	userGuardian   ActorRef
@@ -199,8 +200,9 @@ func NewActorSystemFromConfig(config *Config) (ActorSystem, error) {
 
 	// 创建系统实例
 	sys := &defaultActorSystem{
-		name:   config.Name,
-		config: config,
+		name:          config.Name,
+		config:        config,
+		futureManager: NewFutureManager(),
 		// 初始化dispatcher map
 	}
 
@@ -344,6 +346,8 @@ func (s *defaultActorSystem) createGuardian(path string, props *Props, parent Ac
 	// 注册到registry
 	ref := NewActorRef(path, s, s.registry)
 	cell := NewActorCell(props, ref, parent)
+	// 设置FutureManager
+	cell.SetFutureManager(s.futureManager)
 
 	// 配置supervisor
 	if props.Supervisor.Strategy != nil {
@@ -480,6 +484,8 @@ func (s *defaultActorSystem) spawnActor(props *Props, parent ActorRef) (ActorRef
 	// 创建cell
 	cell := NewActorCell(props, ref, parent)
 	cell.actor = actor
+	// 设置FutureManager
+	cell.SetFutureManager(s.futureManager)
 
 	// 创建mailbox
 	var mailbox Mailbox

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"time"
 )
 
 var (
@@ -78,6 +79,27 @@ func (r *defaultActorRef) Tell(msg interface{}) error {
 	return nil
 }
 
+// Ask 同步发送消息给actor并等待响应
+func (r *defaultActorRef) Ask(msg interface{}, timeout time.Duration) (interface{}, error) {
+	// 检查actor是否存活
+	cell, found := r.registry.Lookup(r.path)
+	if !found || !cell.IsAlive() {
+		return nil, ErrActorNotFound
+	}
+
+	// 使用系统的FutureManager创建Future并发送消息
+	if system, ok := r.actorSystem.(*defaultActorSystem); ok {
+		future, err := system.futureManager.Create(r, msg, timeout)
+		if err != nil {
+			return nil, err
+		}
+		// 等待响应或超时
+		return future.Result(timeout)
+	}
+
+	return nil, errors.New("actor system does not support FutureManager")
+}
+
 // Path 返回actor路径
 func (r *defaultActorRef) Path() string {
 	return r.path
@@ -99,6 +121,11 @@ type noSenderRef struct{}
 
 func (r *noSenderRef) Tell(msg interface{}) error {
 	return errors.New("cannot tell to NoSender")
+}
+
+// Ask 同步发送消息给actor并等待响应
+func (r *noSenderRef) Ask(msg interface{}, timeout time.Duration) (interface{}, error) {
+	return nil, errors.New("cannot ask to NoSender")
 }
 
 func (r *noSenderRef) Path() string {
@@ -123,6 +150,12 @@ func (r *deadLetterRef) Tell(msg interface{}) error {
 	// 死信actor接收消息，但不做处理
 	// 未来可以添加日志记录
 	return nil
+}
+
+// Ask 同步发送消息给actor并等待响应
+func (r *deadLetterRef) Ask(msg interface{}, timeout time.Duration) (interface{}, error) {
+	// 死信不处理请求，直接返回错误
+	return nil, errors.New("cannot ask to dead letters")
 }
 
 func (r *deadLetterRef) Path() string {

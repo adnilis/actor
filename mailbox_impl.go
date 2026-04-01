@@ -201,10 +201,11 @@ func (m *defaultMailbox) invokeUserMessage(msg interface{}) {
 	}
 }
 
-// messageEnvelope 消息包装器，携带sender信息
+// messageEnvelope 消息包装器，携带sender和future信息
 type messageEnvelope struct {
 	message interface{}
 	sender  ActorRef
+	future  *Future // 用于Ask模式的响应
 }
 
 // setSender 设置当前消息的sender

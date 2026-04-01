@@ -75,7 +75,11 @@ func (ctx *defaultActorContext) Parent() ActorRef {
 func (ctx *defaultActorContext) Ask(target ActorRef, msg interface{}, timeout time.Duration) (Future, error) {
 	// 确保有FutureManager
 	if ctx.cell.futureManager == nil {
-		ctx.cell.futureManager = NewFutureManager()
+		if ctx.system != nil {
+			ctx.cell.futureManager = ctx.system.futureManager
+		} else {
+			ctx.cell.futureManager = NewFutureManager()
+		}
 	}
 
 	// 委托给FutureManager创建Future
