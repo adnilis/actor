@@ -135,3 +135,26 @@ func (ctx *defaultActorContext) Reply(response interface{}) error {
 	// 没有 correlationID，发送普通消息
 	return sender.Tell(response)
 }
+
+func (ctx *defaultActorContext) CreateFuture(timeout time.Duration) (Future, error) {
+	// 确保有FutureManager
+	if ctx.cell.futureManager == nil {
+		if ctx.system != nil {
+			ctx.cell.futureManager = ctx.system.futureManager
+		} else {
+			ctx.cell.futureManager = NewFutureManager()
+		}
+	}
+
+	// 创建一个独立的 Future（不发送消息）
+	correlationID := generateCorrelationID()
+	future := NewFuture(correlationID)
+
+	// 注册到 FutureManager
+	ctx.cell.futureManager.(*DefaultFutureManager).Register(future)
+
+	logDebug("Created standalone Future: correlationID=%s, timeout=%dms",
+		correlationID, timeout.Milliseconds())
+
+	return future, nil
+}

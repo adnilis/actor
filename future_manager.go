@@ -30,11 +30,58 @@ type DefaultFutureManager struct {
 	mu      sync.RWMutex
 }
 
+type futureActorRef struct {
+	manager FutureManager
+	path    string
+}
+
+func (r *futureActorRef) Tell(msg interface{}) error {
+	responseMsg, ok := msg.(ResponseMessage)
+	if !ok {
+		return nil
+	}
+	r.manager.Complete(responseMsg)
+	return nil
+}
+
+func (r *futureActorRef) Ask(msg interface{}, timeout time.Duration) (interface{}, error) {
+	return nil, ErrNoSender
+}
+
+func (r *futureActorRef) Path() string {
+	return r.path
+}
+
+func (r *futureActorRef) IsAlive() bool {
+	return true
+}
+
+func (r *futureActorRef) Equals(other ActorRef) bool {
+	return other != nil && other.Path() == r.path
+}
+
 // NewFutureManager 创建一个新的FutureManager
 func NewFutureManager() FutureManager {
 	return &DefaultFutureManager{
 		futures: make(map[string]*FutureImpl),
 	}
+}
+
+func (m *DefaultFutureManager) sendAskRequest(target ActorRef, msg interface{}, sender ActorRef) error {
+	if ref, ok := target.(*defaultActorRef); ok {
+		cell, found := ref.registry.Lookup(ref.path)
+		if !found || !cell.IsAlive() {
+			return ErrActorNotFound
+		}
+
+		cell.Mailbox.PostUserMessage(&messageEnvelope{
+			message: msg,
+			sender:  sender,
+		})
+		return nil
+	}
+
+	return target.Tell(msg)
 }
 
 // Create 创建一个新的Future并发送消息
@@ -49,21 +96,28 @@ func (m *DefaultFutureManager) Create(target ActorRef, msg interface{}, timeout 
 	// 创建Future
 	future := NewFuture(correlationID)
 
+	// 先注册Future，避免目标actor快速回复时出现竞态
+	m.mu.Lock()
+	m.futures[correlationID] = future
+	m.mu.Unlock()
+
 	// 包装消息
 	requestMsg := map[string]interface{}{
 		"__correlationID": correlationID,
 		"__message":       msg,
 	}
-
-	// 发送消息
-	if err := target.Tell(requestMsg); err != nil {
-		return nil, err
+	futureSender := &futureActorRef{
+		manager: m,
+		path:    "/future/" + correlationID,
 	}
 
-	// 注册Future
-	m.mu.Lock()
-	m.futures[correlationID] = future
-	m.mu.Unlock()
+	// 发送消息
+	if err := m.sendAskRequest(target, requestMsg, futureSender); err != nil {
+		m.mu.Lock()
+		delete(m.futures, correlationID)
+		m.mu.Unlock()
+		return nil, err
+	}
 
 	logDebug("FutureManager created Future: correlationID=%s, target=%v, timeout=%dms",
 		correlationID, target, timeout.Milliseconds())
@@ -116,6 +170,13 @@ func (m *DefaultFutureManager) Complete(responseMsg ResponseMessage) bool {
 	// 从映射中删除
 	delete(m.futures, responseMsg.CorrelationID)
 	return true
+}
+
+// Register 注册一个独立的Future（不发送消息）
+func (m *DefaultFutureManager) Register(future *FutureImpl) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.futures[future.CorrelationID()] = future
 }
 
 // Cancel 取消一个Future

@@ -114,7 +114,15 @@ func (s *OneForOneStrategy) Decider(child ActorRef, reason interface{}) Directiv
 
 func (s *OneForOneStrategy) HandleFailure(child ActorRef, reason interface{}) {
 	// 异步处理以避免在消息处理线程中死锁
-	go s.handleFailureAsync(child, reason)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// 处理Decider中的panic，默认重启actor
+				s.applyDirective(child, Restart, reason)
+			}
+		}()
+		s.handleFailureAsync(child, reason)
+	}()
 }
 
 func (s *OneForOneStrategy) handleFailureAsync(child ActorRef, reason interface{}) {

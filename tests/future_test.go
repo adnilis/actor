@@ -9,6 +9,39 @@ import (
 	"github.com/adnilis/actor"
 )
 
+type immediateReplyRef struct {
+	manager actor.FutureManager
+	result  interface{}
+}
+
+func (r *immediateReplyRef) Tell(msg interface{}) error {
+	_, correlationID, ok := actor.ExtractRequestMessage(msg)
+	if !ok {
+		return errors.New("expected ask request message")
+	}
+	r.manager.Complete(actor.ResponseMessage{
+		CorrelationID: correlationID,
+		Result:        r.result,
+	})
+	return nil
+}
+
+func (r *immediateReplyRef) Ask(msg interface{}, timeout time.Duration) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *immediateReplyRef) Path() string {
+	return "/immediate-reply"
+}
+
+func (r *immediateReplyRef) IsAlive() bool {
+	return true
+}
+
+func (r *immediateReplyRef) Equals(other actor.ActorRef) bool {
+	return other != nil && other.Path() == r.Path()
+}
+
 // ============================================
 // Future Tests
 // ============================================
@@ -89,6 +122,34 @@ func TestFutureInvalidInput(t *testing.T) {
 	// Create futures (they don't have timeout in constructor)
 	future := actor.NewFuture("test-" + t.Name())
 	future.Cancel()
+}
+
+func TestFutureManagerCreateRegistersBeforeSend(t *testing.T) {
+	manager, ok := actor.NewFutureManager().(*actor.DefaultFutureManager)
+	if !ok {
+		t.Fatal("expected DefaultFutureManager")
+	}
+
+	target := &immediateReplyRef{
+		manager: manager,
+		result:  "pong",
+	}
+
+	future, err := manager.Create(target, "ping", time.Second)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	result, err := future.Result(100 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("Future should complete immediately, got error: %v", err)
+	}
+	if result != "pong" {
+		t.Fatalf("Future result = %v, want pong", result)
+	}
+	if manager.Count() != 0 {
+		t.Fatalf("FutureManager.Count() = %d, want 0", manager.Count())
+	}
 }
 
 // ============================================

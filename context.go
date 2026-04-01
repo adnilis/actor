@@ -26,6 +26,11 @@ type ActorContext interface {
 	// 将响应发送给通过Ask发起请求的发送者
 	Reply(msg interface{}) error
 
+	// CreateFuture 创建一个独立的Future
+	// 这是一个不与任何Ask请求关联的Future
+	// 可以通过FutureManager.Complete手动完成
+	CreateFuture(timeout time.Duration) (Future, error)
+
 	// Stop 停止当前actor
 	Stop() error
 

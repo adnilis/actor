@@ -370,14 +370,36 @@ func TestActorTell(t *testing.T) {
 	}
 }
 
-// askActor 使用 ctx.Ask 发送请求
-type askActor struct {
+// askResultActor 使用 ctx.Ask 发送请求并记录结果
+type askResultActor struct {
 	target actor.ActorRef
+	result interface{}
+	err    error
+	done   chan struct{}
+	mu     sync.Mutex
 }
 
-func (a *askActor) Receive(ctx actor.ActorContext) {
-	// Test that Ask doesn't panic
-	ctx.Ask(a.target, "question", 1*time.Second)
+func (a *askResultActor) Receive(ctx actor.ActorContext) {
+	future, err := ctx.Ask(a.target, "question", time.Second)
+	if err != nil {
+		a.store(nil, err)
+		return
+	}
+
+	result, err := future.Result(time.Second)
+	a.store(result, err)
+}
+
+func (a *askResultActor) store(result interface{}, err error) {
+	a.mu.Lock()
+	a.result = result
+	a.err = err
+	a.mu.Unlock()
+
+	select {
+	case a.done <- struct{}{}:
+	default:
+	}
 }
 
 func TestActorAsk(t *testing.T) {
@@ -387,7 +409,7 @@ func TestActorAsk(t *testing.T) {
 	}
 	defer system.Shutdown(nil)
 
-	responder := &actor.DefaultActor{}
+	responder := &replyActor{}
 
 	responderRef, err := system.Spawn(actor.NewProps(func() actor.Actor {
 		return responder
@@ -396,9 +418,7 @@ func TestActorAsk(t *testing.T) {
 		t.Fatalf("Failed to spawn responder: %v", err)
 	}
 
-	// Test that Ask can be called without panicking
-	// Note: Full Ask testing is in future_test.go, here we just test the context method
-	asker := &askActor{target: responderRef}
+	asker := &askResultActor{target: responderRef, done: make(chan struct{}, 1)}
 
 	askerRef, err := system.Spawn(actor.NewProps(func() actor.Actor {
 		return asker
@@ -408,10 +428,34 @@ func TestActorAsk(t *testing.T) {
 	}
 
 	askerRef.Tell("trigger")
-	time.Sleep(100 * time.Millisecond)
+
+	select {
+	case <-asker.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx.Ask did not complete in time")
+	}
+
+	asker.mu.Lock()
+	defer asker.mu.Unlock()
+	if asker.err != nil {
+		t.Fatalf("ctx.Ask returned error: %v", asker.err)
+	}
+	if asker.result != "response from replyActor" {
+		t.Fatalf("ctx.Ask result = %v, want %v", asker.result, "response from replyActor")
+	}
+
+	responder.mu.Lock()
+	defer responder.mu.Unlock()
+	originalMsg, _, isAsk := actor.ExtractRequestMessage(responder.replyMsg)
+	if !isAsk {
+		t.Fatal("responder should receive an Ask request message")
+	}
+	if originalMsg != "question" {
+		t.Fatalf("Ask message = %v, want %v", originalMsg, "question")
+	}
 }
 
-// TestActorAskBasic 测试基本的 Ask 功能（不等待响应）
+// TestActorAskBasic 测试 ActorRef.Ask 能收到响应
 func TestActorAskBasic(t *testing.T) {
 	system, err := actor.NewActorSystem(t.Name())
 	if err != nil {
@@ -419,25 +463,32 @@ func TestActorAskBasic(t *testing.T) {
 	}
 	defer system.Shutdown(nil)
 
-	// Simple actor that receives any message
-	simpleActor := &messageCaptureActor{}
+	responder := &replyActor{}
 
 	ref, err := system.Spawn(actor.NewProps(func() actor.Actor {
-		return simpleActor
+		return responder
 	}).WithName("simple"))
 	if err != nil {
 		t.Fatalf("Failed to spawn actor: %v", err)
 	}
 
-	// Test basic Tell works
-	ref.Tell("hello")
-	time.Sleep(100 * time.Millisecond)
-
-	simpleActor.mu.Lock()
-	if simpleActor.message == nil {
-		t.Fatal("Basic Tell should work")
+	result, err := ref.Ask("hello", time.Second)
+	if err != nil {
+		t.Fatalf("ActorRef.Ask returned error: %v", err)
 	}
-	simpleActor.mu.Unlock()
+	if result != "response from replyActor" {
+		t.Fatalf("ActorRef.Ask result = %v, want %v", result, "response from replyActor")
+	}
+
+	responder.mu.Lock()
+	defer responder.mu.Unlock()
+	originalMsg, _, isAsk := actor.ExtractRequestMessage(responder.replyMsg)
+	if !isAsk {
+		t.Fatal("actor should receive an Ask request message")
+	}
+	if originalMsg != "hello" {
+		t.Fatalf("Ask message = %v, want %v", originalMsg, "hello")
+	}
 }
 
 func TestActorMessage(t *testing.T) {
