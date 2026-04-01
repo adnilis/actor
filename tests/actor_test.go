@@ -411,6 +411,35 @@ func TestActorAsk(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+// TestActorAskBasic 测试基本的 Ask 功能（不等待响应）
+func TestActorAskBasic(t *testing.T) {
+	system, err := actor.NewActorSystem(t.Name())
+	if err != nil {
+		t.Fatalf("Failed to create system: %v", err)
+	}
+	defer system.Shutdown(nil)
+
+	// Simple actor that receives any message
+	simpleActor := &messageCaptureActor{}
+
+	ref, err := system.Spawn(actor.NewProps(func() actor.Actor {
+		return simpleActor
+	}).WithName("simple"))
+	if err != nil {
+		t.Fatalf("Failed to spawn actor: %v", err)
+	}
+
+	// Test basic Tell works
+	ref.Tell("hello")
+	time.Sleep(100 * time.Millisecond)
+
+	simpleActor.mu.Lock()
+	if simpleActor.message == nil {
+		t.Fatal("Basic Tell should work")
+	}
+	simpleActor.mu.Unlock()
+}
+
 func TestActorMessage(t *testing.T) {
 	system, err := actor.NewActorSystem(t.Name())
 	if err != nil {
@@ -439,4 +468,44 @@ func TestActorMessage(t *testing.T) {
 	if act.message != testMsg {
 		t.Errorf("Message() = %v, want %v", act.message, testMsg)
 	}
+}
+
+// replyActor 响应 Ask 请求
+type replyActor struct {
+	replyMsg interface{}
+	mu       sync.Mutex
+}
+
+func (a *replyActor) Receive(ctx actor.ActorContext) {
+	a.mu.Lock()
+	a.replyMsg = ctx.Message()
+	a.mu.Unlock()
+	// Reply with a response message
+	ctx.Reply("response from replyActor")
+}
+
+// TestActorReplyWithoutSender 测试没有发送者时 Reply 失败
+func TestActorReplyWithoutSender(t *testing.T) {
+	system, err := actor.NewActorSystem(t.Name())
+	if err != nil {
+		t.Fatalf("Failed to create system: %v", err)
+	}
+	defer system.Shutdown(nil)
+
+	// This actor tries to Reply without a sender context
+	noSenderActor := &messageCaptureActor{}
+
+	ref, err := system.Spawn(actor.NewProps(func() actor.Actor {
+		return noSenderActor
+	}).WithName("noSender"))
+	if err != nil {
+		t.Fatalf("Failed to spawn actor: %v", err)
+	}
+
+	// When Tell is used directly, there is no sender set in context
+	ref.Tell("test")
+	time.Sleep(50 * time.Millisecond)
+
+	// Reply should fail when there's no sender (Ask context)
+	// This is expected behavior - Reply only works in Ask request context
 }

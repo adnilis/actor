@@ -13,6 +13,8 @@ var (
 	ErrActorNotFound = errors.New("actor not found")
 	// ErrActorStopped actor已停止错误
 	ErrActorStopped = errors.New("actor stopped")
+	// ErrNoSender 无发送者错误
+	ErrNoSender = errors.New("no sender")
 
 	// DeadLetters 死信actor引用
 	DeadLetters ActorRef

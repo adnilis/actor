@@ -181,6 +181,11 @@ func (m *defaultMailbox) invokeUserMessage(msg interface{}) {
 	case *messageEnvelope:
 		// 处理带有sender的消息
 		if m.actorCell != nil && m.actorCell.actor != nil {
+			// 检查是否是 ResponseMessage（Future响应），需要先处理
+			if responseMsg, ok := msg.message.(ResponseMessage); ok {
+				m.handleFutureResponse(responseMsg)
+				return
+			}
 			m.setSender(msg.sender)
 			m.setMessage(msg.message)
 			defer m.clearSender()
@@ -188,6 +193,11 @@ func (m *defaultMailbox) invokeUserMessage(msg interface{}) {
 			m.actorCell.actor.Receive(m.actorCell.context)
 		}
 	default:
+		// 检查是否是 ResponseMessage（Future响应）
+		if responseMsg, ok := msg.(ResponseMessage); ok {
+			m.handleFutureResponse(responseMsg)
+			return
+		}
 		// 已经在defaultRef.Tell中包装过了，这里是messageEnvelope
 		// 但是为了兼容性，如果直接调用mailbox.PostUserMessage(msg)
 		// 而没有通过Tell，msg可能不是messageEnvelope

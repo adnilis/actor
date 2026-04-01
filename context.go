@@ -22,6 +22,10 @@ type ActorContext interface {
 	// 返回一个Future，可以等待结果或注册回调
 	Ask(target ActorRef, msg interface{}, timeout time.Duration) (Future, error)
 
+	// Reply 回复Ask请求的响应
+	// 将响应发送给通过Ask发起请求的发送者
+	Reply(msg interface{}) error
+
 	// Stop 停止当前actor
 	Stop() error
 
