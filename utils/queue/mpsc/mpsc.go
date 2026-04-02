@@ -5,8 +5,7 @@ package mpsc
 */
 
 import (
-	"sync/atomic"
-	"unsafe"
+	"sync"
 )
 
 type node struct {
@@ -16,6 +15,7 @@ type node struct {
 
 // Queue 表示队列对象
 type Queue struct {
+	mu         sync.Mutex
 	head, tail *node
 }
 
@@ -40,49 +40,58 @@ func New() *Queue {
 
 // Push 向队列尾部插入一个元素
 func (q *Queue) Push(x interface{}) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	n := getNode() // 获取一个新的节点对象
 	n.val = x
-
-	for {
-		prev := (*node)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&q.head)))) // 原子操作，获取当前头节点
-		n.next = prev.next
-
-		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&q.head)), unsafe.Pointer(prev), unsafe.Pointer(n)) {
-			atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&prev.next)), unsafe.Pointer(n))
-			return
-		}
-	}
+	q.head.next = n
+	q.head = n
 }
 
 // Pop 从队列头部弹出一个元素
 func (q *Queue) Pop() interface{} {
-	for {
-		tail := q.tail // 获取当前尾节点
-		next := tail.next
-		if next == nil {
-			return nil
-		}
-		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&q.tail)), unsafe.Pointer(tail), unsafe.Pointer(next)) {
-			v := next.val
-			next.val = nil
-			putNode(tail) // 将旧的节点对象放回节点池中
-			return v
-		}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	tail := q.tail
+	next := tail.next
+	if next == nil {
+		return nil
 	}
+
+	q.tail = next
+	v := next.val
+	next.val = nil
+	putNode(tail) // 将旧的节点对象放回节点池中
+	return v
 }
 
 // Empty 检查队列是否为空
 func (q *Queue) Empty() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	return q.head == q.tail
 }
 
 // Destory 销毁队列对象
 func (q *Queue) Destroy() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	for {
-		q.Pop()
-		if q.Empty() {
+		tail := q.tail
+		next := tail.next
+		if next == nil {
 			break
 		}
+		q.tail = next
+		next.val = nil
+		putNode(tail)
+	}
+	if q.tail != nil {
+		putNode(q.tail)
 	}
 	q.head = nil
 	q.tail = nil

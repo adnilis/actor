@@ -83,7 +83,12 @@ func (m *defaultMailbox) schedule() {
 // processMessages 处理消息
 func (m *defaultMailbox) processMessages() {
 	m.run()
-	m.schedulerStatus.Store(int32(mailboxIdle))
+	if !m.schedulerStatus.CompareAndSwap(int32(mailboxRunning), int32(mailboxIdle)) {
+		return
+	}
+	if m.sysMessages.Load() > 0 || m.userMessages.Load() > 0 {
+		m.schedule()
+	}
 }
 
 // run 消息处理主循环
